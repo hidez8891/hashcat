@@ -24,7 +24,7 @@ static const char *HASH_NAME      = "PDF 1.4 - 1.6 (Acrobat 5 - 8) - owner pass"
 static const u64   KERN_TYPE      = 25400;
 static const u32   OPTI_TYPE      = OPTI_TYPE_ZERO_BYTE
                                   | OPTI_TYPE_NOT_ITERATED;
-static const u64   OPTS_TYPE      = OPTS_TYPE_PT_GENERATE_LE | OPTS_TYPE_COPY_TMPS | OPTS_TYPE_PT_ALWAYS_ASCII;
+static const u64   OPTS_TYPE      = OPTS_TYPE_PT_GENERATE_LE | OPTS_TYPE_COPY_TMPS;
 static const u32   SALT_TYPE      = SALT_TYPE_EMBEDDED;
 static const char *ST_PASS        = "hashcat";
 static const char *ST_HASH        = "$pdf$2*3*128*-3904*1*16*631ed33746e50fba5caf56bcc39e09c6*32*5f9d0e4f0b39835dace0d306c40cd6b700000000000000000000000000000000*32*842103b0a0dc886db9223b94afe2d7cd63389079b61986a4fcf70095ad630c24";
@@ -335,10 +335,6 @@ int module_hash_decode (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSE
   const u8 *o_len_pos  = token.buf[10];
   const u8 *o_buf_pos  = token.buf[11]; // owner hash
   const u8 *u_pass_buf_pos  = token.buf[12]; // user password (optional)
-  // we don't use the user-password in the attack now (as we don't need it),
-  //  however we could use it in the comparison of the decrypted o-value,
-  //  yet it may make this attack a bit more fragile, as now we just check for ASCII
-
 
   // validate data
 
@@ -378,8 +374,8 @@ int module_hash_decode (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSE
   pdf->R = R;
   pdf->P = P;
 
-  memcpy ( pdf->u_pass_buf, u_pass_buf_pos, 32);
-  pdf->u_pass_len = strlen((char *) pdf->u_pass_buf);
+  pdf->u_pass_len = strlen((char *) u_pass_buf_pos);
+  memcpy ( pdf->u_pass_buf, u_pass_buf_pos, pdf->u_pass_len);
 
   pdf->enc_md = enc_md;
 
@@ -451,89 +447,36 @@ int module_hash_decode (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSE
   salt->salt_buf[1] = pdf->id_buf[1];
   salt->salt_buf[2] = pdf->id_buf[2];
   salt->salt_buf[3] = pdf->id_buf[3];
-  salt->salt_buf[4] = pdf->o_buf[0]; // switched u_buf with o_buf vs m10500
-  salt->salt_buf[5] = pdf->o_buf[1];
-  salt->salt_buf[6] = pdf->u_buf[0];
-  salt->salt_buf[7] = pdf->u_buf[1];
+  salt->salt_buf[4] = pdf->u_buf[0];
+  salt->salt_buf[5] = pdf->u_buf[1];
+  salt->salt_buf[6] = pdf->o_buf[0];
+  salt->salt_buf[7] = pdf->o_buf[1];
   salt->salt_len    = pdf->id_len + 16;
 
   salt->salt_iter   = (50 + 20);
 
-  digest[0] = pdf->o_buf[0]; // o_buf instead of u_buf vs m10500
+  digest[0] = pdf->o_buf[0];
   digest[1] = pdf->o_buf[1];
-  digest[2] = 0;
-  digest[3] = 0;
+  digest[2] = pdf->o_buf[2];
+  digest[3] = pdf->o_buf[3];
 
   return (PARSER_OK);
 }
 
 int module_build_plain_postprocess (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const hashes_t *hashes, MAYBE_UNUSED const void *tmps, const u32 *src_buf, MAYBE_UNUSED const size_t src_sz, MAYBE_UNUSED const int src_len, u32 *dst_buf, MAYBE_UNUSED const size_t dst_sz)
 {
-  const u32 padding[8] =
-  {
-    0x5e4ebf28,
-    0x418a754e,
-    0x564e0064,
-    0x0801faff,
-    0xb6002e2e,
-    0x803e68d0,
-    0xfea90c2f,
-    0x7a695364
-  };
-
   pdf14_tmp_t *pdf_tmp = (pdf14_tmp_t *) tmps;
   pdf_t *pdf = (pdf_t *) hashes->esalts_buf;
 
-  // if the password in tmp->out is equal to the padding, then we recovered just the owner-password
-  if(pdf_tmp->out[0]==padding[0] && pdf_tmp->out[1]==padding[1] && pdf_tmp->out[2]==padding[2] && pdf_tmp->out[3]==padding[3])
-  {
-    return snprintf ((char *) dst_buf, dst_sz, "%s    (user password not set)", (char *) src_buf);
+  if (pdf->u_pass_len == 0) {
+    return snprintf ((char *) dst_buf, dst_sz, "%s (user password not set)", (char *) src_buf);
   }
-
-  // cast out buffer to byte such that we can do a byte per byte comparison
-  u32 *u32OutBufPtr = pdf_tmp->out;
-  u8 *u8OutBufPtr;
-  u8OutBufPtr = (u8*) u32OutBufPtr;
-
-  // cast padding buffer to byte such that we can do a byte per byte comparison
-  const u32 *u32OutPadPtr = padding;
-  const u8 *u8OutPadPtr;
-  u8OutPadPtr = (u8*) u32OutPadPtr;
-
-  bool remove_padding=false;
-  int i_padding=0;
-  for(int i=0;i<16;i++)
-  {
-    if(u8OutBufPtr[i]==u8OutPadPtr[i_padding] || remove_padding)
-    {
-    u8OutBufPtr[i]=0x0;
-    remove_padding=true;
-    }
+  else {
+    return snprintf ((char *) dst_buf, dst_sz, "%s (user password=%s)", (char *) src_buf, (char *) pdf->u_pass_buf);
   }
-
-  // if the password in tmp->out is equal to the password tried, then we recovered just the owner-password or just the user-password
-  //   we check whether we already have a user-password in the hash
-  //   TODO would be better to actually also verify the u-value whether we've retrieved the correct user-password,
-  //     however, we'd need to include a lot of code/complexity here to do so (or call into 10500 kernel).
-  //     this seems relevant: run_kernel (hashcat_ctx, device_param, KERN_RUN_3, 0, 1, false, 0)
-  if(pdf_tmp->out[0]==src_buf[0] && pdf_tmp->out[1]==src_buf[1] && pdf_tmp->out[2]==src_buf[2] && pdf_tmp->out[3]==src_buf[3])
-  {
-    if(pdf->u_pass_len==0)
-    {
-      // we seem to only have recovered the user-password as we don't have one yet
-      return snprintf ((char *) dst_buf, dst_sz, "(user password=%s)", (char *) src_buf);
-    }
-  }
-  // we recovered both the user-password and the owner-password
-  return snprintf ((char *) dst_buf, dst_sz, "%s    (user password=%s)", (char *) src_buf, (char *) pdf_tmp->out);
 }
 
 
-// TODO how to add the recovered user-password to the hash?
-// module_hash_encode() is called before module_build_plain_postprocess() is
-//  module_hash_encode() doesn't know the recovered password src_buf or the decrypted o-value pdf_tmp->out
-//    it seems a bit excessive to add these both to module_hash_encode()'s parameters
-//  module_build_plain_postprocess() cannot alter the hash nor hash access to the pdf/esalt object
 int module_hash_encode (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const void *digest_buf, MAYBE_UNUSED const salt_t *salt, MAYBE_UNUSED const void *esalt_buf, MAYBE_UNUSED const void *hook_salt_buf, MAYBE_UNUSED const hashinfo_t *hash_info, char *line_buf, MAYBE_UNUSED const int line_size)
 {
   int line_len = 0;
@@ -574,7 +517,7 @@ int module_hash_encode (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSE
       byte_swap_32 (pdf->o_buf[5]),
       byte_swap_32 (pdf->o_buf[6]),
       byte_swap_32 (pdf->o_buf[7]),
-      (char *) pdf->u_pass_buf // TODO just prints the old hash now, we don't edit the hash to add a recovered user-password to it (yet)
+      (char *) pdf->u_pass_buf
     );
   }
   else
@@ -608,7 +551,7 @@ int module_hash_encode (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSE
       byte_swap_32 (pdf->o_buf[5]),
       byte_swap_32 (pdf->o_buf[6]),
       byte_swap_32 (pdf->o_buf[7]),
-      (char *) pdf->u_pass_buf // TODO just prints the old hash now, we don't edit the hash to add a recovered user-password to it (yet)
+      (char *) pdf->u_pass_buf
     );
   }
 
