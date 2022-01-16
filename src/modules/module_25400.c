@@ -431,17 +431,20 @@ int module_build_plain_postprocess (MAYBE_UNUSED const hashconfig_t *hashconfig,
 
 int module_hash_encode (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const void *digest_buf, MAYBE_UNUSED const salt_t *salt, MAYBE_UNUSED const void *esalt_buf, MAYBE_UNUSED const void *hook_salt_buf, MAYBE_UNUSED const hashinfo_t *hash_info, char *line_buf, MAYBE_UNUSED const int line_size)
 {
+  pdf_t *pdf = (pdf_t *) esalt_buf;
   int line_len = 0;
 
-  pdf_t *pdf = (pdf_t *) esalt_buf;
-  if (pdf->id_len == 32)
-  {
-    line_len = snprintf (line_buf, line_size, "$pdf$%d*%d*%d*%d*%d*%d*%08x%08x%08x%08x%08x%08x%08x%08x*%d*%08x%08x%08x%08x%08x%08x%08x%08x*%d*%08x%08x%08x%08x%08x%08x%08x%08x%s",
+  line_len = snprintf (line_buf, line_size, "$pdf$%d*%d*%d*%d*%d",
       pdf->V,
       pdf->R,
       128,
       pdf->P,
-      pdf->enc_md,
+      pdf->enc_md
+  );
+
+  if (pdf->id_len == 32)
+  {
+    line_len += snprintf (line_buf+line_len, line_size-line_len, "*%d*%08x%08x%08x%08x%08x%08x%08x%08x",
       pdf->id_len,
       byte_swap_32 (pdf->id_buf[0]),
       byte_swap_32 (pdf->id_buf[1]),
@@ -450,59 +453,44 @@ int module_hash_encode (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSE
       byte_swap_32 (pdf->id_buf[4]),
       byte_swap_32 (pdf->id_buf[5]),
       byte_swap_32 (pdf->id_buf[6]),
-      byte_swap_32 (pdf->id_buf[7]),
-      pdf->u_len,
-      byte_swap_32 (pdf->u_buf[0]),
-      byte_swap_32 (pdf->u_buf[1]),
-      byte_swap_32 (pdf->u_buf[2]),
-      byte_swap_32 (pdf->u_buf[3]),
-      byte_swap_32 (pdf->u_buf[4]),
-      byte_swap_32 (pdf->u_buf[5]),
-      byte_swap_32 (pdf->u_buf[6]),
-      byte_swap_32 (pdf->u_buf[7]),
-      pdf->o_len,
-      byte_swap_32 (pdf->o_buf[0]),
-      byte_swap_32 (pdf->o_buf[1]),
-      byte_swap_32 (pdf->o_buf[2]),
-      byte_swap_32 (pdf->o_buf[3]),
-      byte_swap_32 (pdf->o_buf[4]),
-      byte_swap_32 (pdf->o_buf[5]),
-      byte_swap_32 (pdf->o_buf[6]),
-      byte_swap_32 (pdf->o_buf[7]),
-      (char *) pdf->u_pass_buf
+      byte_swap_32 (pdf->id_buf[7])
     );
   }
   else
   {
-    line_len = snprintf (line_buf, line_size, "$pdf$%d*%d*%d*%d*%d*%d*%08x%08x%08x%08x*%d*%08x%08x%08x%08x%08x%08x%08x%08x*%d*%08x%08x%08x%08x%08x%08x%08x%08x%s",
-      pdf->V,
-      pdf->R,
-      128,
-      pdf->P,
-      pdf->enc_md,
+    line_len += snprintf (line_buf+line_len, line_size-line_len, "*%d*%08x%08x%08x%08x",
       pdf->id_len,
       byte_swap_32 (pdf->id_buf[0]),
       byte_swap_32 (pdf->id_buf[1]),
       byte_swap_32 (pdf->id_buf[2]),
-      byte_swap_32 (pdf->id_buf[3]),
-      pdf->u_len,
-      byte_swap_32 (pdf->u_buf[0]),
-      byte_swap_32 (pdf->u_buf[1]),
-      byte_swap_32 (pdf->u_buf[2]),
-      byte_swap_32 (pdf->u_buf[3]),
-      byte_swap_32 (pdf->u_buf[4]),
-      byte_swap_32 (pdf->u_buf[5]),
-      byte_swap_32 (pdf->u_buf[6]),
-      byte_swap_32 (pdf->u_buf[7]),
-      pdf->o_len,
-      byte_swap_32 (pdf->o_buf[0]),
-      byte_swap_32 (pdf->o_buf[1]),
-      byte_swap_32 (pdf->o_buf[2]),
-      byte_swap_32 (pdf->o_buf[3]),
-      byte_swap_32 (pdf->o_buf[4]),
-      byte_swap_32 (pdf->o_buf[5]),
-      byte_swap_32 (pdf->o_buf[6]),
-      byte_swap_32 (pdf->o_buf[7]),
+      byte_swap_32 (pdf->id_buf[3])
+    );
+  }
+
+  line_len += snprintf (line_buf+line_len, line_size-line_len, "*%d*%08x%08x%08x%08x%08x%08x%08x%08x*%d*%08x%08x%08x%08x%08x%08x%08x%08x",
+    pdf->u_len,
+    byte_swap_32 (pdf->u_buf[0]),
+    byte_swap_32 (pdf->u_buf[1]),
+    byte_swap_32 (pdf->u_buf[2]),
+    byte_swap_32 (pdf->u_buf[3]),
+    byte_swap_32 (pdf->u_buf[4]),
+    byte_swap_32 (pdf->u_buf[5]),
+    byte_swap_32 (pdf->u_buf[6]),
+    byte_swap_32 (pdf->u_buf[7]),
+    pdf->o_len,
+    byte_swap_32 (pdf->o_buf[0]),
+    byte_swap_32 (pdf->o_buf[1]),
+    byte_swap_32 (pdf->o_buf[2]),
+    byte_swap_32 (pdf->o_buf[3]),
+    byte_swap_32 (pdf->o_buf[4]),
+    byte_swap_32 (pdf->o_buf[5]),
+    byte_swap_32 (pdf->o_buf[6]),
+    byte_swap_32 (pdf->o_buf[7])
+  );
+
+  if (pdf->u_pass_len > 0)
+  {
+    line_len += snprintf (line_buf+line_len, line_size-line_len, "*%s",
       (char *) pdf->u_pass_buf
     );
   }
