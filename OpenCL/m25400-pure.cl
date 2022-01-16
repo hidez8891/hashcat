@@ -35,9 +35,6 @@ typedef struct pdf
   int u_len;
   int u_pass_len;
 
-  u32 rc4key[2];
-  u32 rc4data[2];
-
 } pdf_t;
 
 typedef struct pdf14_tmp
@@ -54,7 +51,6 @@ KERNEL_FQ void m25400_init (KERN_ATTR_TMPS_ESALT (pdf14_tmp_t, pdf_t))
    */
 
   const u64 gid = get_global_id (0);
-  //const u64 lid = get_local_id (0);
 
   if (gid >= GID_CNT) return;
 
@@ -188,7 +184,7 @@ KERNEL_FQ void m25400_init (KERN_ATTR_TMPS_ESALT (pdf14_tmp_t, pdf_t))
 
     switch_buffer_by_offset_le (w0_t, w1_t, w2_t, w3_t, u_len);
 
-    // use only 128bit hash (speedup) 
+    // use only 128bit hash (speedup)
     tmps[gid].out[0] = w0_t[0] | w0[0];
     tmps[gid].out[1] = w0_t[1] | w0[1];
     tmps[gid].out[2] = w0_t[2] | w0[2];
@@ -203,7 +199,6 @@ KERNEL_FQ void m25400_loop (KERN_ATTR_TMPS_ESALT (pdf14_tmp_t, pdf_t))
    */
 
   const u64 gid = get_global_id (0);
-  const u64 lid = get_local_id (0);
 
   if (gid >= GID_CNT) return;
 
@@ -274,7 +269,7 @@ KERNEL_FQ void m25400_loop (KERN_ATTR_TMPS_ESALT (pdf14_tmp_t, pdf_t))
       tmp[2] = digest[2] ^ xv;
       tmp[3] = digest[3] ^ xv;
 
-      // calc only 128bit hash (speedup) 
+      // calc only 128bit hash (speedup)
       rc4_init_128 (S, tmp);
       rc4_next_16 (S, 0, 0, out, out);
     }

@@ -62,9 +62,6 @@ typedef struct pdf
   int u_len;
   int u_pass_len;
 
-  u32 rc4key[2];
-  u32 rc4data[2];
-
 } pdf_t;
 
 typedef struct pdf14_tmp
@@ -75,22 +72,6 @@ typedef struct pdf14_tmp
 } pdf14_tmp_t;
 
 static const char *SIGNATURE_PDF = "$pdf$";
-
-static void md5_complete_no_limit (u32 digest[4], const u32 *plain, const u32 plain_len)
-{
-  // plain = u32 tmp_md5_buf[64] so this is compatible
-
-  md5_ctx_t md5_ctx;
-
-  md5_init (&md5_ctx);
-  md5_update (&md5_ctx, plain, plain_len);
-  md5_final (&md5_ctx);
-
-  digest[0] = md5_ctx.h[0];
-  digest[1] = md5_ctx.h[1];
-  digest[2] = md5_ctx.h[2];
-  digest[3] = md5_ctx.h[3];
-}
 
 char *module_jit_build_options (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const user_options_t *user_options, MAYBE_UNUSED const user_options_extra_t *user_options_extra, MAYBE_UNUSED const hashes_t *hashes, MAYBE_UNUSED const hc_device_param_t *device_param)
 {
@@ -414,34 +395,6 @@ int module_hash_decode (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSE
   pdf->o_buf[7]  = hex_to_u32 (o_buf_pos + 56);
   pdf->o_len     = o_len;
 
-  // precompute rc4 data for later use
-  u32 padding[8] =
-  {
-    0x5e4ebf28,
-    0x418a754e,
-    0x564e0064,
-    0x0801faff,
-    0xb6002e2e,
-    0x803e68d0,
-    0xfea90c2f,
-    0x7a695364
-  };
-
-  // md5
-  u32 salt_pc_block[32] = { 0 };
-
-  u8 *salt_pc_ptr = (u8 *) salt_pc_block;
-
-  memcpy (salt_pc_ptr, padding, 32);
-  memcpy (salt_pc_ptr + 32, pdf->id_buf, pdf->id_len);
-
-  u32 salt_pc_digest[4] = { 0 };
-
-  md5_complete_no_limit (salt_pc_digest, salt_pc_block, 32 + pdf->id_len);
-
-  pdf->rc4data[0] = salt_pc_digest[0];
-  pdf->rc4data[1] = salt_pc_digest[1];
-
   // we use ID for salt, maybe needs to change, we will see...
   salt->salt_buf[0] = pdf->id_buf[0];
   salt->salt_buf[1] = pdf->id_buf[1];
@@ -465,7 +418,6 @@ int module_hash_decode (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSE
 
 int module_build_plain_postprocess (MAYBE_UNUSED const hashconfig_t *hashconfig, MAYBE_UNUSED const hashes_t *hashes, MAYBE_UNUSED const void *tmps, const u32 *src_buf, MAYBE_UNUSED const size_t src_sz, MAYBE_UNUSED const int src_len, u32 *dst_buf, MAYBE_UNUSED const size_t dst_sz)
 {
-  pdf14_tmp_t *pdf_tmp = (pdf14_tmp_t *) tmps;
   pdf_t *pdf = (pdf_t *) hashes->esalts_buf;
 
   if (pdf->u_pass_len == 0) {
