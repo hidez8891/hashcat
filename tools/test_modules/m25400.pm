@@ -27,7 +27,7 @@ sub module_constraints { [[0, 15], [32, 32], [-1, -1], [-1, -1], [-1, -1]] }
 
 sub pdf_compute_encryption_key_user
 {
-  my $word  = shift;
+  my $word_buf  = shift;
   my $padding   = shift;
   my $id        = shift;
   my $u         = shift;
@@ -41,9 +41,9 @@ sub pdf_compute_encryption_key_user
 
   my $data;
 
-  $data .= $word;
+  $data .= $word_buf;
 
-  $data .= substr ($padding, 0, 32 - length $word);
+  $data .= substr ($padding, 0, 32 - length $word_buf);
 
   $data .= pack ("H*", $o);
   $data .= pack ("I",  $P);
@@ -73,7 +73,7 @@ sub pdf_compute_encryption_key_user
 
 sub pdf_compute_encryption_key_owner
 {
-  my $word  = shift;
+  my $word_buf  = shift;
   my $padding   = shift;
   my $id        = shift;
   my $u         = shift;
@@ -84,8 +84,9 @@ sub pdf_compute_encryption_key_owner
   my $enc       = shift;
 
   my $data;
-  $data .= $word;
-  $data .= substr ($padding, 0, 32 - length $word);
+  $data .= $word_buf;
+  $data .= substr ($padding, 0, 32 - length $word_buf);
+
   my $o_digest = md5 ($data);
 
   if ($R >= 3)
@@ -96,29 +97,19 @@ sub pdf_compute_encryption_key_owner
     }
   }
 
-  my $o_key;
-  if ($R == 2)
-  {
-    $o_key = substr($o_digest, 0, 8);  # rc4 key is always 5 for revision 2, but for 3 or greather is dependent on the value of the encryption dictionaries length entry
-  }
-  else
-  {
-    $o_key = substr($o_digest, 0, 16); #length is always 128 bits or 16 bytes
-  }
-
-  return $o_key;
+  return $o_digest;
 }
 
 sub module_generate_hash
 {
-  my $word = shift;
-  my $id   = shift;
-  my $u    = shift;
-  my $o    = shift;
-  my $P    = shift;
-  my $V    = shift;
-  my $R    = shift;
-  my $enc  = shift;
+  my $word    = shift;
+  my $id      = shift;
+  my $u       = shift;
+  my $o       = shift;
+  my $P       = shift;
+  my $V       = shift;
+  my $R       = shift;
+  my $enc     = shift;
   my $u_pass  = shift;
 
   if (defined $u == 0)
@@ -172,69 +163,50 @@ sub module_generate_hash
   # do not change $u if it exists, keep this the same, as we don't know the user password,
   #  we cannot calculate this part of the hash again
 
-  if ($u eq "0000000000000000000000000000000000000000000000000000000000000000")
+  if ($u eq ("0" x 64))
   {
-    my $res;
-    if($u_pass eq "")
-    {
-      # we don't know the user-password so calculate $u based on the owner-password
-    $res = pdf_compute_encryption_key_user($word, $padding, $id, $u, $o, $P, $V, $R, $enc);
-    }
-    else
-    {
-    #we do know the user-password, so we can generate $u
-    $res = pdf_compute_encryption_key_user($u_pass, $padding, $id, $u, $o, $P, $V, $R, $enc);
-    }
+    my $u_key = pdf_compute_encryption_key_user($u_pass, $padding, $id, $u, $o, $P, $V, $R, $enc);
 
     my $digest = md5 ($padding . pack ("H*", $id));
 
-    my $m = Crypt::RC4->new ($res);
+    my $m = Crypt::RC4->new ($u_key);
+
     $u = $m->RC4 ($digest);
 
-    my @ress = split "", $res;
+    my @ress = split "", $u_key;
 
-    #do xor of rc4 19 times
     for (my $x = 1; $x <= 19; $x++)
     {
-    my @xor;
+      my @xor;
 
-    for (my $i = 0; $i < 16; $i++)
-    {
-      $xor[$i] = chr (ord ($ress[$i]) ^ $x);
+      for (my $i = 0; $i < 16; $i++)
+      {
+        $xor[$i] = chr (ord ($ress[$i]) ^ $x);
+      }
+
+      my $s = join ("", @xor);
+
+      my $m2 = Crypt::RC4->new ($s);
+
+      $u = $m2->RC4 ($u);
     }
 
-    my $s = join ("", @xor);
-
-    my $m2 = Crypt::RC4->new ($s);
-
-    $u = $m2->RC4 ($u);
-    }
-    $u .= substr (pack ("H*", $u_save), 16, 16);
+    # 128bit + "0" padding
+    $u .= substr (pack("H*", "0" x 32), 0);
   }
-  else
-  {
-    $u = pack("H*", $u)
-  }
+
 
   ################ OWNER PASSWORD #################
   my $o_key = pdf_compute_encryption_key_owner($word, $padding, $id, $u, $o, $P, $V, $R, $enc);
 
   my $n = Crypt::RC4->new ($o_key);
-  if($u_pass eq "")
-  {
-     $o = $n->RC4(substr ($padding, 0, 32 - length ""));
-  }
-  else
-  {
-    #dynamically add user password including padding to the RC4 input for the computation of the pdf o-value
-    $o = $n->RC4($u_pass.substr ($padding, 0, 32 - length $u_pass));
-  }
+
+  $o = $n->RC4($u_pass . substr ($padding, 0, 32 - length $u_pass));
 
   my @ress2 = split "", $o_key;
 
   if ($R >= 3)
   {
-    #do xor of rc4 19 times
     for (my $x = 1; $x <= 19; $x++)
     {
       my @xor;
@@ -245,12 +217,15 @@ sub module_generate_hash
       }
 
       my $s = join ("", @xor);
-    my $n2 = Crypt::RC4->new ($s);
+
+      my $n2 = Crypt::RC4->new ($s);
 
       $o = $n2->RC4 ($o);
     }
   }
 
+
+  ################ GENERATE HASH #################
   my $hash;
   if($u_pass eq "")
   {
